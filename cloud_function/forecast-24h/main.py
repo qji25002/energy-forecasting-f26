@@ -66,7 +66,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(
 # ----------------------------------------------------------------------------------------------------------------
 WEATHER = ["temp_f", "dewpoint_f", "rel_humidity_pct", "wind_speed_mph", "cloud_cover_pct"]
 CALENDAR = ["hour", "day_of_week", "month", "is_weekend", "is_holiday"]
-FEATURES = CALENDAR + WEATHER + ["load_yesterday_mw", "load_last_week_mw", "cooling_deg", "heating_deg"]
+FEATURES = CALENDAR + WEATHER + ["load_yesterday_mw"]
 
 
 def make_features(hours_utc, weather, load):
@@ -91,15 +91,6 @@ def make_features(hours_utc, weather, load):
     yesterday = load.reindex(hours_utc - pd.Timedelta(hours=24)).values
     hour_before = load.reindex(hours_utc - pd.Timedelta(hours=25)).values
     out["load_yesterday_mw"] = np.where(np.isnan(yesterday), hour_before, yesterday)
-
-    # Same hour one week ago (168 hours). If that hour is missing, fall back to yesterday.
-    last_week = load.reindex(hours_utc - pd.Timedelta(hours=168)).values
-    out["load_last_week_mw"] = np.where(np.isnan(last_week), out["load_yesterday_mw"].values, last_week)
-
-    # Degree-hours: how far above or below 65 F, the temperature where Connecticut uses the least electricity.
-    # The load-vs-temperature relationship is a U; this hands the model the shape instead of making it find it.
-    out["cooling_deg"] = np.maximum(out["temp_f"] - 65, 0)
-    out["heating_deg"] = np.maximum(65 - out["temp_f"], 0)
     return out[FEATURES]
 # ----------------------------------------------------------------------------------------------------------------
 
@@ -156,10 +147,6 @@ def fill_inputs(X, load):
     """Honest gap filling (rare): a missing weather value takes its neighbor; a missing yesterday load the newest load."""
     X[WEATHER] = X[WEATHER].interpolate(limit_direction="both")
     X["load_yesterday_mw"] = X["load_yesterday_mw"].fillna(float(load.iloc[-1]))
-    X["load_last_week_mw"] = X["load_last_week_mw"].fillna(X["load_yesterday_mw"])
-    # temp_f may have just been interpolated, so rebuild the degree-hours from the filled temperature
-    X["cooling_deg"] = np.maximum(X["temp_f"] - 65, 0)
-    X["heating_deg"] = np.maximum(65 - X["temp_f"], 0)
     return X
 
 
@@ -286,10 +273,6 @@ def run_once(dry_run: bool = False) -> dict:
     X[WEATHER] = X[WEATHER].interpolate(limit_direction="both")
     filled_load = int(X["load_yesterday_mw"].isna().sum())
     X["load_yesterday_mw"] = X["load_yesterday_mw"].fillna(float(load.iloc[-1]))
-    X["load_last_week_mw"] = X["load_last_week_mw"].fillna(X["load_yesterday_mw"])
-    # temp_f may have just been interpolated, so rebuild the degree-hours from the filled temperature
-    X["cooling_deg"] = np.maximum(X["temp_f"] - 65, 0)
-    X["heating_deg"] = np.maximum(65 - X["temp_f"], 0)
     if X[WEATHER].isna().any().any():
         return {"status": "no_weather_data", "message": "The weather forecast does not cover the next 24 hours yet."}
 
